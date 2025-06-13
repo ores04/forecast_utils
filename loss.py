@@ -1,4 +1,4 @@
-from forcast_utils.models import LSTM
+from forecast_utils.models import LSTM
 from jax import numpy as jnp
 
 

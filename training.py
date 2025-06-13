@@ -5,8 +5,8 @@ import optax
 from flax import nnx
 from jax import numpy as jnp
 
-from forcast_utils.loss import mean_squared_error
-from forcast_utils.models import LSTM
+from forecast_utils.loss import mean_squared_error
+from forecast_utils.models import LSTM
 
 
 

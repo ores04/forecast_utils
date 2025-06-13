@@ -1,2 +1,2 @@
 
-__all__ = ['preprocessing', 'models', 'utils', 'visualization', 'base_fn', 'augmentation', 'training', 'loss']
+__all__ = ['preprocessing', 'models', 'utils', 'visualisation', 'base_fn', 'augmentation', 'training', 'loss']

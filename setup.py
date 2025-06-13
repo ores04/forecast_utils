@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='forcast_utils',
+    name='forecast_utils',
     version='0.1.0',
     description='Hilfsfunktionen und Modelle für Volatilitätsprognosen',
     author='Sebastian Orth',

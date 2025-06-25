@@ -1,7 +1,9 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+
 
 def augment_data(data: np.array, label: np.array) -> tuple[np.array, np.array]:
 
@@ -304,3 +306,54 @@ if __name__ == '__main__':
     axes[-1].set_xlabel("Timesteps")
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to make room for suptitle
     plt.show()
+def smooth_column(data_series: pd.Series, method: str, **kwargs) -> pd.Series:
+    """
+    Applies a specified smoothing technique to a pandas Series.
+
+    Args:
+        data_series (pd.Series): The pandas Series (column) to be smoothed.
+        method (str): The smoothing method to use.
+            Options: 'moving_average', 'exponential', 'savitzky_golay'.
+        **kwargs: Keyword arguments for the chosen smoothing method.
+            - For 'moving_average':
+                - window_size (int): The size of the sliding window.
+            - For 'exponential':
+                - window_size (int): The span for the exponential weighting.
+            - For 'savitzky_golay':
+                - window_size (int): The length of the filter window (must be a positive odd integer).
+                - poly_order (int): The order of the polynomial used to fit the samples.
+                                   It must be less than window_size.
+
+    Returns:
+        pd.Series: A new pandas Series containing the smoothed data.
+                   The first few values will be NaN depending on the window size.
+    """
+    if not isinstance(data_series, pd.Series):
+        raise TypeError("Input 'data_series' must be a pandas Series.")
+
+    if method == 'moving_average':
+        window_size = kwargs.get('window_size', 5)
+        return data_series.rolling(window=window_size, center=True, min_periods=1).mean()
+
+    elif method == 'exponential':
+        window_size = kwargs.get('window_size', 5)
+        # The 'span' parameter is roughly comparable to the window size of a moving average
+        return data_series.ewm(span=window_size, adjust=False).mean()
+
+    elif method == 'savitzky_golay':
+        window_size = kwargs.get('window_size', 11)
+        poly_order = kwargs.get('poly_order', 2)
+
+        if window_size % 2 == 0:
+            raise ValueError("For Savitzky-Golay, 'window_size' must be an odd number.")
+        if poly_order >= window_size:
+            raise ValueError("'poly_order' must be less than 'window_size'.")
+
+        # Savgol filter requires a numpy array
+        smoothed_data = savgol_filter(data_series.dropna(), window_size, poly_order)
+        # Return as a pandas Series with the original index
+        return pd.Series(smoothed_data, index=data_series.dropna().index)
+
+    else:
+        raise ValueError(f"Unknown smoothing method: '{method}'. "
+                         "Available options are 'moving_average', 'exponential', 'savitzky_golay'.")

@@ -114,7 +114,7 @@ def add_target_column(data: pd.DataFrame, target_column: str, base_column:str) -
     assert target_column not in data.columns, f"Data must contain '{target_column}' column"
     print("Using base column:", base_column, "to create target column:", target_column)
     # Add target column
-    data[target_column] = data[base_column].shift(1)
+    data[target_column] = data[base_column].shift(-1)
     # Drop rows with NaN values
     data.dropna(inplace=True)
 

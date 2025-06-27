@@ -24,3 +24,20 @@ def visualize_forcast(forcast, ground_trouth=None, base_assest=None, title='Fore
     plt.legend()
     plt.grid()
     plt.show()
+
+
+
+def plot_timeseries(ts1, ts2=None, title='Time Series Plot', label_ts1='Time Series 1', label_ts2='Time Series 2'):
+    """Plots two time series on the same graph."""
+    plt.figure(figsize=(14, 7))
+    plt.plot(ts1, label=label_ts1, color='blue', linewidth=2)
+
+    if ts2 is not None:
+        plt.plot(ts2, label=label_ts2, color='orange', linestyle='--', linewidth=2)
+
+    plt.title(title)
+    plt.xlabel('Time')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid()
+    plt.show()

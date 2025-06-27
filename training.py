@@ -40,7 +40,19 @@ def train_model(model: nnx.Module, optimizer, X_train: jnp.ndarray, Y_train: jnp
 
 def evaluate_model(model, x_test: jnp.ndarray, y_test: jnp.ndarray):
     """The function calculate the metrics for the model on the test set. For now we will use a simple MSE"""
-    y_pred = model(x_test)
-  #  y_test = jnp.reshape(y_test, (-1, 1))
-    mse = jnp.mean((y_pred - y_test) ** 2)
-    return mse
+    pred = model(x_test)
+    metrics = compute_metrics(pred, y_test)
+    # return epsilon loss
+    return metrics['epsilon_loss']
+
+def compute_metrics(predictions: jnp.ndarray, targets: jnp.ndarray) -> dict:
+    """Compute metrics for the model predictions."""
+    diff = predictions - targets
+    # Calculate epsilon loss, which is a modified MSE that ignores small differences
+    epsilon = 0.1
+    epsilon_loss = jnp.mean(jnp.where(jnp.abs(diff) > epsilon , jnp.exp(jnp.abs(diff)), 0))  # Adding a small epsilon to avoid division by zero
+   # epsilon_loss = jnp.mean((predictions - targets) ** 2 if jnp.abs(predictions - targets) > 5e-2 else 0)  # Adding a small epsilon to avoid division by zero
+    mse = jnp.mean((predictions - targets) ** 2)
+    mae = jnp.mean(jnp.abs(predictions - targets))
+    rmse = jnp.sqrt(jnp.mean(jnp.square(predictions - targets)))
+    return {'mse': mse, 'mae': mae, 'rmse': rmse, 'epsilon_loss': epsilon_loss}

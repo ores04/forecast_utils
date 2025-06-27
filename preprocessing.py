@@ -2,8 +2,10 @@ import os
 import yfinance as yf
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-import jax.numpy as jnp
 import numpy as np
+import pywt
+
+from forecast_utils import base_fn, visualisation
 
 
 def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -149,15 +151,42 @@ def drop_columns(data: pd.DataFrame, columns: list) -> pd.DataFrame:
     data = data.drop(columns=columns, errors='ignore')
     return data
 
+def reduce_high_frequency_components(volatility_series) -> pd.DataFrame:
+    """ This function will apply a wavelet transform to reduce high frequency components in the data."""
+    wavelet = 'sym2'
+    # The level of decomposition depends on the signal length and desired smoothing.
+    level = 3
+    coeffs = pywt.swt(volatility_series, wavelet, level=level)
+
+    # 3. Threshold the detail coefficients to remove noise
+    # A universal threshold is a common choice.
+    sigma = np.median(np.abs(coeffs[-1][-1] - np.median(coeffs[-1][-1]))) / 0.6745
+    threshold = sigma * np.sqrt(2 * np.log(len(volatility_series)))
+
+    thresholded_coeffs = []
+    for ca, cd in coeffs:
+        cd_thresh = pywt.threshold(cd, threshold, mode='soft')
+        thresholded_coeffs.append((ca, cd_thresh))
+
+    # 4. Reconstruct the smoothed time series using the inverse SWT
+    smoothed_series = pywt.iswt(thresholded_coeffs, wavelet)
+    return smoothed_series
+
+
 if __name__ == "__main__":
     # Example usage
-    ticker = "AAPL"
-    start = "2020-01-01"
-    end = "2023-01-01"
-    data = download_data(ticker, start, end)
-    feature_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Log_Returns_Volatility']
-    target_column = 'Next_Day_Close'
-    window = 30
+    current_path = base_fn.get_current_path()  # workaround for the jupyter notebook
+    btc = pd.read_csv(current_path + "/data/BTC_USD-15min.csv", parse_dates=['Open time'], index_col='Open time')
+    data = preprocess_15_min_data(btc.copy(), target_column="Target",
+                                                feature_columns=['Open', 'High', 'Low', 'Close', 'Volume'],
+                                                window=5)
+    data_preprocessed = drop_columns(data.copy(),
+                                                   ['Open', 'High', 'Low', 'Log_Returns_5_Volatility', 'Log_Returns',
+                                                    'Log_Returns_5_Volatility_Variance', 'Close'])
 
-    processed_data = preprocess_data(data, target_column, feature_columns, window)
-    print(processed_data.head())
+    standard_vola_copied = data_preprocessed['Standard_Realized_Volatility'].copy()
+    wavelet_transformed = reduce_high_frequency_components(standard_vola_copied[4:])
+
+    print(data_preprocessed['Standard_Realized_Volatility'].shape)
+
+    visualisation.plot_timeseries(wavelet_transformed[100:400], data_preprocessed['Standard_Realized_Volatility'].to_numpy()[4:][100:400])

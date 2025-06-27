@@ -216,7 +216,7 @@ class GARCHModel(nnx.Module):
 # now lets define the LSTM model
 class LSTM(nnx.Module):
 
-    def __init__(self, features: int, hidden_features: list[int],special_last_layer: bool, rngs: nnx.Rngs | None = None):
+    def __init__(self, features: int, hidden_features: list[int],special_last_layer: bool, rngs: nnx.Rngs | None = None, use_dropout: bool = False):
         """This function initializes the LSTM model.
             features: int - the number of features in the input data, this means the number of features each time step has.
             hidden_features: list[int] - the number of hidden features in the LSTM cell, the lists length is the number of layers in the LSTM while the last layer
@@ -235,7 +235,9 @@ class LSTM(nnx.Module):
             lstm_cells=self.lstm_cells,
             rngs=rngs,
             special_last_layer=special_last_layer,
+            use_dropout=use_dropout
         )
+
 
 
         self.linear_layer1 = nnx.Linear(
@@ -247,13 +249,20 @@ class LSTM(nnx.Module):
 
     def __call__(self, x):
         """Forward pass of the LSTM"""
-        for recurrent, linear in self.reccurent_layers:
-            x = recurrent(x)  # Pass the input through the recurrent layer
+        for layer in self.reccurent_layers:
+            reccurent = layer[0]  # The recurrent layer is the first element of the tuple
+            dropout = layer[1]  # The dropout layer is the second element of the tuple
+            linear = layer[2]  # The linear layer is the third element of the tuple
+            x = reccurent(x)  # Pass the input through the recurrent layer
+
             if linear is not None:
                 x = linear(x)
+            if dropout is not None:
+                x = dropout(x)
         # now feed it to the linear layer
         x = x[:, -1, :]
         x = self.linear_layer1(x)
+        x = nnx.softplus(x) + 1e-6
         return x  # Return the last output of the LSTM, which is the prediction for the last time step
 
     @staticmethod
@@ -277,7 +286,7 @@ class LSTM(nnx.Module):
                 ))
         return lstm_cells
     @staticmethod
-    def construct_reccurent_layers(lstm_cells: list[nnx.LSTMCell], rngs: nnx.Rngs | None = None, special_last_layer=False) -> list[tuple[nnx.RNN, nnx.Linear]]:
+    def construct_reccurent_layers(lstm_cells: list[nnx.LSTMCell], rngs: nnx.Rngs | None = None, special_last_layer=False, use_dropout=False) -> list[tuple[nnx.RNN,nnx.Dropout, nnx.Linear]]:
         """Construct the recurrent layers for the model."""
         layers = []
         for i in range(len(lstm_cells)):
@@ -288,8 +297,11 @@ class LSTM(nnx.Module):
             )
             if i == len(lstm_cells) - 1:
                 # If it's the last layer, we don't need a linear layer after it
-                layers.append((rnn_layer, None))
+                layers.append((rnn_layer, None, None))
                 break
+            dropout = nnx.Dropout(0.1, rngs=rngs)
+            if not use_dropout:
+                dropout = None
             # Add a linear layer after each RNN layer
             if i == len(lstm_cells) - 2 and special_last_layer:
                 linear_layer = linear_layer = nnx.Linear(
@@ -305,7 +317,9 @@ class LSTM(nnx.Module):
                     use_bias=True,
                     rngs=rngs
                 )
-            layers.append((rnn_layer, linear_layer))
+            layer = (rnn_layer, dropout, linear_layer)
+            layers.append(layer)
+
         return layers
 
 

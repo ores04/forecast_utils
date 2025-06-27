@@ -37,3 +37,39 @@ def transform_data_to_training_timeseries_jax(data: pd.DataFrame, window_size: i
 
         return x, y
 
+
+import numpy as np
+from sklearn.preprocessing import RobustScaler
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class RobustScaler05(BaseEstimator, TransformerMixin):
+    def __init__(self, quantile_range=(25.0, 75.0), with_centering=True, with_scaling=True):
+        self.quantile_range = quantile_range
+        self.with_centering = with_centering
+        self.with_scaling = with_scaling
+        self.scaler = RobustScaler(
+            quantile_range=quantile_range,
+            with_centering=with_centering,
+            with_scaling=with_scaling
+        )
+
+    def fit(self, X, y=None):
+        self.scaler.fit(X)
+        return self
+
+    def transform(self, X):
+        # Apply standard robust scaling (centers around 0)
+        X_scaled = self.scaler.transform(X)
+        # Shift to center around 0.5
+        return X_scaled + 0.5
+
+    def inverse_transform(self, X):
+        # Shift back to 0-centered, then apply inverse transform
+        X_shifted = X - 0.5
+        return self.scaler.inverse_transform(X_shifted)
+
+    def fit_transform(self, X, y=None):
+        return self.fit(X).transform(X)
+
+

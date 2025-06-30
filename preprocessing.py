@@ -29,10 +29,90 @@ def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
 
     return data
 
+
+def calculate_final_realized_volatility_6_to_6(
+    data: pd.DataFrame,
+    price_column: str,
+    start_hour: int = 6
+) -> pd.Series:
+    """
+    Calculates the final realized volatility for a custom daily window (e.g., 6am to 6am).
+
+    This function directly computes the final daily value without returning
+    intermediate cumulative steps.
+
+    Args:
+        data (pd.DataFrame): DataFrame with a DatetimeIndex and price data.
+        price_column (str): The name of the column containing the price data.
+        start_hour (int): The hour at which the trading day begins.
+
+    Returns:
+        pd.Series: A Series indexed by date, containing the final realized
+                   volatility for each custom trading day.
+    """
+    # --- Input Validation ---
+    if not isinstance(data.index, pd.DatetimeIndex):
+        raise TypeError("Input DataFrame must have a DatetimeIndex.")
+    if price_column not in data.columns:
+        raise ValueError(f"Column '{price_column}' not found in the DataFrame.")
+
+    # Create a copy to avoid modifying the original DataFrame
+    df = data.copy()
+
+    # 1. Calculate 15-minute returns
+    df['return'] = df[price_column].pct_change()
+
+    # 2. Define the custom trading day by shifting the index
+    time_shift = pd.Timedelta(hours=start_hour)
+    df['trading_day'] = (df.index - time_shift).date # This means that the trading day is always glued to the start date of the trading day, e.g. 6am to 6am
+
+    # 3. Group by the custom trading day, calculate sum of squared returns, and then sqrt
+    # The .sum() calculates the total variance for the 6-to-6 period.
+    daily_variance = df.groupby('trading_day')['return'].apply(lambda x: (x**2).sum())
+
+    # Take the square root to get the final volatility
+    daily_volatility = np.sqrt(daily_variance)
+    daily_volatility.name = "realized_volatility"
+
+    return daily_volatility
+
+
+def preprocess_15_min_data_for_daily_predict(data) -> pd.DataFrame:
+    data = data.copy()
+    daily_realied_vola = calculate_final_realized_volatility_6_to_6(data=data, price_column="Close", start_hour=16)
+    # remove the last value as it is not complete
+    daily_realied_vola = daily_realied_vola[:-1]
+    # resamle so that we have a daily frequency from 6pm to 6pm
+
+
+    aggregation_rules = {
+        'Close': 'last',
+    }
+    valid_rules = {col: rule for col, rule in aggregation_rules.items() if col in data.columns}
+    # shift the whole dataframe 18 hours back to align with the 4pm to 4pm trading day UTC
+    data.index = data.index - pd.Timedelta(hours=16)
+    aggregated_dataframe = data.resample('D').agg(valid_rules)
+    realized_vola = pd.DataFrame(daily_realied_vola)
+    # make sure the index is a datetime index
+    realized_vola.index = pd.to_datetime(realized_vola.index, utc=True)
+    realized_vola.tz_convert("UTC")
+    # check if aggregated_dataframe has a tz aware index
+    aggregated_dataframe.index = pd.to_datetime(aggregated_dataframe.index, utc=True)
+
+    aggregated_dataframe = aggregated_dataframe.join(realized_vola, how='inner',)
+    aggregated_dataframe['close_return'] = aggregated_dataframe['Close'].pct_change() # the first value will be assumed to be the same as the second
+    aggregated_dataframe['close_return'] = aggregated_dataframe['close_return'].fillna(aggregated_dataframe.iloc[1]['close_return'])  # fill NaN with the first value
+    aggregated_dataframe['target'] = aggregated_dataframe['realized_volatility']
+
+    return aggregated_dataframe
+
 def preprocess_15_min_data(data: pd.DataFrame, target_column: str, feature_columns: list, window: int) -> pd.DataFrame:
     """ This function will preprocess data given in a 15 minute interval such that it is ready for training. In this case the window which is asked in the other functions is not needed as
     we proxy the volatility with the standart realized volatility."""
 
+    # shift the data to align with the 6pm to 6pm trading day
+    data = data.copy()
+    data.index = data.index - pd.Timedelta(hours=16)  # Shift to align with 6pm to 6pm MESZ trading day
 
     standart_realized_volatility = calculate_standard_realized_volatility(data, base_column='Close')
     aggregation_rules = {
@@ -57,7 +137,7 @@ def preprocess_15_min_data(data: pd.DataFrame, target_column: str, feature_colum
 
 
 
-def calculate_standard_realized_volatility(data: pd.DataFrame, base_column) -> pd.Series:
+def calculate_standard_realized_volatility(data: pd.DataFrame, base_column, start_time=16) -> pd.Series:
     """ This function will calculate the standard realized volatility based on the base column. """
     assert base_column in data.columns, f"Data must contain '{base_column}' column"
     assert isinstance(data.index, pd.DatetimeIndex), "Data index must be a DatetimeIndex"
@@ -186,7 +266,8 @@ if __name__ == "__main__":
 
     standard_vola_copied = data_preprocessed['Standard_Realized_Volatility'].copy()
     wavelet_transformed = reduce_high_frequency_components(standard_vola_copied[4:])
-
+    wavelet_transformed_shortened = reduce_high_frequency_components(wavelet_transformed[-128:])
     print(data_preprocessed['Standard_Realized_Volatility'].shape)
 
-    visualisation.plot_timeseries(wavelet_transformed[100:400], data_preprocessed['Standard_Realized_Volatility'].to_numpy()[4:][100:400])
+    visualisation.plot_timeseries(wavelet_transformed[-128:],
+                                  wavelet_transformed_shortened,)

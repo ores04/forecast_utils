@@ -299,7 +299,7 @@ class LSTM(nnx.Module):
                 # If it's the last layer, we don't need a linear layer after it
                 layers.append((rnn_layer, None, None))
                 break
-            dropout = nnx.Dropout(0.1, rngs=rngs)
+            dropout = None # skip the dropout for now
             if not use_dropout:
                 dropout = None
             # Add a linear layer after each RNN layer

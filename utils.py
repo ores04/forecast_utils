@@ -1,13 +1,22 @@
+import pathlib
+
 import pandas as pd
 import numpy as np
 import jax.numpy as jnp
+from forecast_utils.base_fn import get_current_path
+from forecast_utils import preprocessing
+from forecast_utils.models import LSTM
+from flax import nnx
+import jax
+import orbax.checkpoint as ocp
+import joblib
 
 def train_test_split(data: pd.DataFrame, test_size: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the data into training and testing sets."""
     split_index = int(len(data) * (1 - test_size))
-    train_data = data[:split_index]
+    data = data[:split_index]
     test_data = data[split_index:]
-    return train_data, test_data
+    return data, test_data
 
 def transform_data_to_training_timeseries_np(data: pd.DataFrame, window_size: int = 100) -> tuple[np.array, np.array]:
     """Transform the DataFrame into a time series format for training."""
@@ -18,11 +27,11 @@ def transform_data_to_training_timeseries_np(data: pd.DataFrame, window_size: in
     y = y[window_size:] # drop label for series that are not complete
     return x, y
 
-def transform_data_to_training_timeseries_jax(data: pd.DataFrame, window_size: int = 100, columns_to_drop=['Target']) -> \
+def transform_data_to_training_timeseries_jax(data: pd.DataFrame, window_size: int = 100, columns_to_drop=['Target'], target_column="Target") -> \
     tuple[jnp.ndarray, jnp.ndarray]:
         """Transform the DataFrame into a time series format for training."""
         # Convert DataFrame to JAX array
-        y = jnp.array(data['Target'])
+        y = jnp.array(data[target_column])
         x_unformatted = jnp.array(data.drop(columns=columns_to_drop))
         x = []
         for i, row in enumerate(x_unformatted):
@@ -73,3 +82,41 @@ class RobustScaler05(BaseEstimator, TransformerMixin):
         return self.fit(X).transform(X)
 
 
+    
+def scale_data(data) -> tuple[pd.DataFrame, RobustScaler05]:
+
+    scaler = fit_scaler_on_saved_data('close_return')
+    data['close_return'] = scaler.transform(data[['close_return']])
+    scaler = fit_scaler_on_saved_data('realized_volatility')
+    data['realized_volatility'] = scaler.transform(data[['realized_volatility']])
+    scaler_target = fit_scaler_on_saved_data('target')
+    data['target'] = scaler_target.transform(data[['target']])
+
+    data['close_return'] = preprocessing.reduce_high_frequency_components(data['close_return'])
+    data['realized_volatility'] = preprocessing.reduce_high_frequency_components(data['realized_volatility'])
+    data['target'] = preprocessing.reduce_high_frequency_components(data['target'])
+    print(data.head())
+    return data, scaler
+
+def fit_scaler_on_saved_data(column: str) -> RobustScaler05:
+
+    path = get_current_path()
+    btc = pd.read_csv(path + "/data/BTC_USD-15min.csv", parse_dates=['Open time'], index_col='Open time')
+    data = preprocessing.preprocess_15_min_data_for_daily_predict(btc)
+    return RobustScaler05().fit(data[[column]])
+
+def get_current_forecast_model() -> LSTM:
+    """Loads the model from the curent checkpoint """
+    checkpointer = ocp.PyTreeCheckpointer()
+
+    abstract_lstm = nnx.eval_shape(lambda: LSTM(features=2, hidden_features=[8,64], special_last_layer=False,rngs=nnx.Rngs(jax.random.PRNGKey(0)), use_dropout=False))
+    graph_def, state = nnx.split(abstract_lstm)
+    path = pathlib.Path(get_current_path() + '/' + 'checkpoints_double_4_to_4_utc_feature_pytree')
+
+    state_restored = checkpointer.restore(path / 'checkpoint', state)
+    model = nnx.merge(graph_def, state_restored)
+    return model
+
+if __name__ == "__main__":
+    model = get_current_forecast_model()
+    nnx.display(model)

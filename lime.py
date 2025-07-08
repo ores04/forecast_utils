@@ -19,8 +19,9 @@ class LIMEExplainer:
     noise_ts = None
     explanation = None
     original_prediction = None
+    scaler = None
 
-    def __init__(self, timeseries,timeseries_for_backgound_noise, model: nnx.module, sample_size=1000, random_seed=None):
+    def __init__(self, timeseries, timeseries_for_backgound_noise, model: nnx.module, sample_size=1000, random_seed=None, scaler=None):
         self.timeseries = timeseries
         self.model = model
         self.sample_size = sample_size
@@ -30,7 +31,20 @@ class LIMEExplainer:
         timeseries_for_lstm_pred = jnp.array([timeseries])
         timeseries_for_lstm_pred = jnp.expand_dims(timeseries_for_lstm_pred, axis=-1)  # Add a channel to fix the input shape for the model (batch_size, time_steps, features)
         self.original_prediction = model(timeseries_for_lstm_pred)
+        self.scaler = scaler
 
+    def test(self):
+        timeseries_for_lstm_pred = jnp.array([self.timeseries])
+        timeseries_for_lstm_pred = jnp.expand_dims(timeseries_for_lstm_pred, axis=-1)
+        y = self.model(timeseries_for_lstm_pred)
+        # remove value 20 from the timeseries
+        first_half = np.copy(self.timeseries)[:20]
+        second_half = np.copy(self.timeseries)[21:]
+        ts = np.concatenate((first_half, second_half), axis=0)
+        timeseries_for_lstm_pred = jnp.array([ts])
+        timeseries_for_lstm_pred = jnp.expand_dims(timeseries_for_lstm_pred, axis=-1)
+        y_new = self.model(timeseries_for_lstm_pred)
+        print(y_new, y)
 
     def determine_background_frequency(self, timeseries):
         """
@@ -92,6 +106,25 @@ class LIMEExplainer:
 
 
 
+    def generate_indexes_for_perturbation_random(self) -> list:
+        indexes_for_perturbation = []
+
+        for i in range(self.sample_size):
+            # Generate a random number of indexes to perturb
+            num_indexes = random.randint(1, 5)
+            # Generate unique random indexes
+            indexes = random.sample(range(len(self.timeseries)), num_indexes)
+            # add if not already in the list
+
+            if indexes not in indexes_for_perturbation:
+                indexes_for_perturbation.append(indexes)
+
+        return indexes_for_perturbation
+
+
+
+
+
     def generate_indexes_for_perturbation(self) -> list:
         """Generates random indexes for perturbation."""
         indexes_for_perturbation = []
@@ -102,18 +135,33 @@ class LIMEExplainer:
         cross_prod = [(i, j) for i in temp for j in temp if i != j]
         # add the cross product indexes to the list
         indexes_for_perturbation.extend(cross_prod)
+        if len(self.timeseries) > 20:
+            # replace three values in the time series with noise
+            temp = range(len(self.timeseries))
+            cross_prod_3 = [(i, j, k) for i in temp for j in temp for k in temp if i != j and i != k and j != k]
+            # add the cross product indexes to the list
+            indexes_for_perturbation.extend(cross_prod_3)
+        if len(self.timeseries) > 30:
+            # replace four values in the time series with noise
+            temp = range(len(self.timeseries))
+            cross_prod_4 = [(i, j, k, l) for i in temp for j in temp for k in temp for l in temp if i != j and i != k and i != l and j != k and j != l and k != l]
+            # add the cross product indexes to the list
+            indexes_for_perturbation.extend(cross_prod_4)
         return indexes_for_perturbation
 
 
 
-    def explain(self):
+    def explain(self, random_indexes=False):
 
-        pertubation_indexes = self.generate_indexes_for_perturbation()
+        if random_indexes:
+            pertubation_indexes = self.generate_indexes_for_perturbation_random()
+        else:
+            pertubation_indexes = self.generate_indexes_for_perturbation()
         perturbed_ts = [self.perturb_timeseries(self.timeseries, indexes) for indexes in pertubation_indexes]
 
         # get the model predictions for the perturbed time series
         # calculate weight vector w
-        w = [self.exponential_kernal(x, 10) for x in perturbed_ts]
+        w = [self.exponential_kernal(x, 100) for x in perturbed_ts]
 
 
         # normalize the weights
@@ -124,12 +172,14 @@ class LIMEExplainer:
         perturbed_ts_for_lstm = jnp.array(perturbed_ts)
         perturbed_ts_for_lstm = jnp.expand_dims(perturbed_ts_for_lstm, axis=-1) # Add a channel to fix the input shape for the model (batch_size, time_steps, features)
 
-
-        y = self.model(perturbed_ts_for_lstm)
+        if self.scaler:
+            y = [self.predict_timeseries(np.array([ts])) for ts in perturbed_ts_for_lstm]
+        else:
+            y = self.model(perturbed_ts_for_lstm)
 
 
         # calculate the explanations using ridge regression
-        ridge = Ridge(alpha=1.0, fit_intercept=False)
+        ridge = Ridge(alpha=1.0, fit_intercept=True)
         ridge.fit(perturbed_ts, y, sample_weight=w)
 
         self.explanation = ridge.coef_
@@ -163,6 +213,9 @@ class LIMEExplainer:
         axes[0].grid(True, alpha=0.3)
         axes[0].legend()
 
+        # plot the prediction into the first plot
+        axes[0].axhline(y=float(self.original_prediction[0][0]), color='orange', linestyle='--', linewidth=1, label='Model Prediction')
+
         # Plot 2: LIME Explanation (Feature Importance)
         # The explanation shows how much each time point contributes to the prediction
         colors = ['red' if coef < 0 else 'green' for coef in self.explanation]
@@ -184,9 +237,9 @@ class LIMEExplainer:
                      transform=axes[2].transAxes, fontsize=12,
                      bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue"))
 
-        axes[2].text(0.1, 0.5, f'Explanation Sum: {float(np.sum(self.explanation)):.4f}',
+        axes[2].text(0.1, 0.5, f'Sum of Explanations: {float(np.sum(self.explanation)):.4f}',
                      transform=axes[2].transAxes, fontsize=12,
-                     bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen"))
+                     bbox=dict(boxstyle="round,pad=0.3", facecolor="purple"))
 
         axes[2].text(0.1, 0.3, f'Most Important Time Point: {int(np.argmax(np.abs(self.explanation)))}',
                      transform=axes[2].transAxes, fontsize=12,
@@ -245,7 +298,7 @@ class LIMEExplainer:
 
         # replace the values at the specified indexes with noise at the same indexes multiplied by a random factor
         for index in indexes:
-            perturbed_timeseries[index] = noise_ts[index * random_mult]
+            perturbed_timeseries[index] = 0.45666224 # Try mean for now TODO
 
         return perturbed_timeseries
 
@@ -270,6 +323,25 @@ class LIMEExplainer:
 
         return (expected_value_ts2 * expected_value_ts1) / (variance_ts1 * variance_ts2)
 
+    def predict_timeseries(self, timeseries):
+
+
+        # get the last timeseries
+        vola_prediction = self.model(timeseries)
+        vola_prediction = vola_prediction[-1].reshape(1, -1)
+
+        # inverse the scaling
+        prediction = self.scaler.inverse_transform(vola_prediction)
+
+        pred_mean = jnp.mean(prediction)
+
+        p = prediction - pred_mean
+        p = p * 3
+        prediction = p + pred_mean
+        value = prediction[0]
+
+
+        return value[0]
 
     def exponential_kernal(self, x, l):
         """ This implements the exponential kernal function as defined in the LIME paper."""
@@ -325,7 +397,11 @@ def generate_random_points_around_sin_wave():
     y = np.sin(x)
     return y
 
+
+
 if __name__ == "__main__":
+
+
 
     # Example usage
     timeseries = np.random.rand(7)  # Example time series data

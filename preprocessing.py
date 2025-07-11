@@ -29,6 +29,36 @@ def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
 
     return data
 
+def calculate_log_realized_volatility_6_to_6(
+    data: pd.DataFrame,
+    price_column: str,
+    start_hour: int = 18) -> pd.Series:
+    # --- Input Validation ---
+    if not isinstance(data.index, pd.DatetimeIndex):
+        raise TypeError("Input DataFrame must have a DatetimeIndex.")
+    if price_column not in data.columns:
+        raise ValueError(f"Column '{price_column}' not found in the DataFrame.")
+
+    # Create a copy to avoid modifying the original DataFrame
+    df = data.copy()
+
+    # 1. Calculate 15-minute log_returns
+    df['log_return'] = np.log(df[price_column].pct_change())
+
+    # 2. Define the custom trading day by shifting the index
+    time_shift = pd.Timedelta(hours=start_hour)
+    df['trading_day'] = (df.index - time_shift).date # This means that the trading day is always glued to the start date of the trading day, e.g. 6am to 6am
+
+    # 3. Group by the custom trading day, calculate sum of squared returns, and then sqrt
+    # The .sum() calculates the total variance for the 6-to-6 period.
+    daily_variance = df.groupby('trading_day')['log_return'].apply(lambda x: (x**2).sum())
+
+    # Take the square root to get the final volatility
+    daily_volatility = np.sqrt(daily_variance)
+    daily_volatility.name = "realized_log_volatility"
+
+    return daily_volatility
+
 
 def calculate_final_realized_volatility_6_to_6(
     data: pd.DataFrame,
@@ -77,11 +107,13 @@ def calculate_final_realized_volatility_6_to_6(
     return daily_volatility
 
 
-def preprocess_15_min_data_for_daily_predict(data) -> pd.DataFrame:
+def preprocess_15_min_data_for_daily_predict(data, use_log_as_target=False) -> pd.DataFrame:
     data = data.copy()
     daily_realied_vola = calculate_final_realized_volatility_6_to_6(data=data, price_column="Close", start_hour=16)
+    daily_realized_log_vola = calculate_log_realized_volatility_6_to_6(data=data, price_column="Close", start_hour=16)
     # remove the last value as it is not complete
     daily_realied_vola = daily_realied_vola[:-1]
+    daily_realized_log_vola = daily_realized_log_vola[:-1]
     # resamle so that we have a daily frequency from 6pm to 6pm
 
 
@@ -96,13 +128,20 @@ def preprocess_15_min_data_for_daily_predict(data) -> pd.DataFrame:
     # make sure the index is a datetime index
     realized_vola.index = pd.to_datetime(realized_vola.index, utc=True)
     realized_vola.tz_convert("UTC")
+
+    realized_log_vola = pd.DataFrame(daily_realized_log_vola)
+    realized_log_vola.index = pd.to_datetime(realized_log_vola.index, utc=True)
     # check if aggregated_dataframe has a tz aware index
     aggregated_dataframe.index = pd.to_datetime(aggregated_dataframe.index, utc=True)
 
     aggregated_dataframe = aggregated_dataframe.join(realized_vola, how='inner',)
+    aggregated_dataframe = aggregated_dataframe.join(realized_log_vola, how='inner',)
     aggregated_dataframe['close_return'] = aggregated_dataframe['Close'].pct_change() # the first value will be assumed to be the same as the second
     aggregated_dataframe['close_return'] = aggregated_dataframe['close_return'].fillna(aggregated_dataframe.iloc[1]['close_return'])  # fill NaN with the first value
     aggregated_dataframe['target'] = aggregated_dataframe['realized_volatility']
+    if use_log_as_target:
+        aggregated_dataframe['target'] = aggregated_dataframe['realized_log_volatility']
+
 
     return aggregated_dataframe
 
@@ -114,7 +153,7 @@ def preprocess_15_min_data(data: pd.DataFrame, target_column: str, feature_colum
     data = data.copy()
     data.index = data.index - pd.Timedelta(hours=16)  # Shift to align with 6pm to 6pm MESZ trading day
 
-    standart_realized_volatility = calculate_standard_realized_volatility(data, base_column='Close')
+    standart_realized_volatility = calculate_standard_realized_volatility(data, base_column='Close', use_log=True)
     aggregation_rules = {
         'Open': 'first',
         'High': 'max',
@@ -137,13 +176,16 @@ def preprocess_15_min_data(data: pd.DataFrame, target_column: str, feature_colum
 
 
 
-def calculate_standard_realized_volatility(data: pd.DataFrame, base_column, start_time=16) -> pd.Series:
+def calculate_standard_realized_volatility(data: pd.DataFrame, base_column, start_time=16, use_log=False) -> pd.Series:
     """ This function will calculate the standard realized volatility based on the base column. """
     assert base_column in data.columns, f"Data must contain '{base_column}' column"
     assert isinstance(data.index, pd.DatetimeIndex), "Data index must be a DatetimeIndex"
 
-    # caclulate the 15 minute returns
-    return_series = data[base_column].pct_change().copy()
+    # caclulate the 15 minute log_returns
+    return_series= data[base_column].pct_change().copy()
+    if use_log:
+        return_series = np.log(1 + return_series)
+
     return_series = return_series.fillna(0)
     return_series = return_series ** 2  # Square the returns to get the variance
     return_series = return_series.resample('D').sum()  # Resample to daily returns
@@ -156,7 +198,7 @@ def preprocess_data(data: pd.DataFrame, target_column: str, feature_columns: lis
     assert window > 0, "Window must be greater than 0."
     assert data is not None, "Data must not be None."
 
-    data_temp = calculate_log_returns(data)
+    data_temp = calculate_log_returns(data, base_column='Close')
     data_temp = calculate_volatility(data_temp, base_column='Log_Returns', window=window)
     close_column = 'Close'
     base_column = f'Log_Returns_{window}_Volatility'
@@ -176,11 +218,21 @@ def preprocess_data(data: pd.DataFrame, target_column: str, feature_columns: lis
     data_temp = data_temp[feature_columns + [target_column, base_column, 'Log_Returns', f'{base_column}_Variance', 'Close_Returns', f'Close_Returns_{window}_Volatility']]
     return data_temp
 
-def calculate_returns(data: pd.DataFrame, base_column: str) -> pd.DataFrame:
+def calculate_returns(data: pd.DataFrame, base_column: str, use_log=False) -> pd.DataFrame:
     """ This function will calculate the returns based on the base column. """
     assert base_column in data.columns, f"Data must contain '{base_column}' column"
 
     data[f'{base_column}_Returns'] = data[base_column].pct_change()
+    if use_log:
+        data[f'{base_column}_Returns'] = np.log(1 + data[f'{base_column}_Returns'])
+    return data
+
+def calculate_log_returns(data: pd.DataFrame, base_column: str) -> pd.DataFrame:
+    """ This function will calculate the log returns based on the base column. """
+    assert base_column in data.columns, f"Data must contain '{base_column}' column"
+
+    returns = data[base_column].pct_change()
+    data[f'Log_Returns'] = np.log(1 + returns)
     return data
 
 def calculate_window_variance(data: pd.DataFrame, volatility_column: str) -> pd.DataFrame:
@@ -214,15 +266,6 @@ def calculate_volatility(data: pd.DataFrame, base_column: str,  window: int = 30
     assert base_column in data.columns, f"Data must contain '{base_column}' column"
 
     data[f'{base_column}_{window}_Volatility'] = data[base_column].rolling(window).std()
-    return data
-
-def calculate_log_returns(data: pd.DataFrame) -> pd.DataFrame:
-    """ This function will add a column with the log returns based on the 'Close' column. """
-    assert 'Close' in data.columns, "Data must contain 'Close' column"
-    data['temp'] = data['Close'].shift(1)
-    data.dropna()
-    data['Log_Returns'] = np.log(data['Close'] / data['temp'])
-    data.drop(columns=['temp'], inplace=True)
     return data
 
 def drop_columns(data: pd.DataFrame, columns: list) -> pd.DataFrame:

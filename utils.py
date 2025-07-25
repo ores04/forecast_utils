@@ -109,7 +109,7 @@ def get_current_forecast_model() -> LSTM:
     """Loads the model from the curent checkpoint """
     checkpointer = ocp.PyTreeCheckpointer()
 
-    abstract_lstm = nnx.eval_shape(lambda: LSTM(features=2, hidden_features=[8,64], special_last_layer=False,rngs=nnx.Rngs(jax.random.PRNGKey(0)), use_dropout=False))
+    abstract_lstm = nnx.eval_shape(lambda: LSTM(features=2, hidden_features=[16,32,16], special_last_layer=True,rngs=nnx.Rngs(jax.random.PRNGKey(0)), use_dropout=False))
     graph_def, state = nnx.split(abstract_lstm)
     path = pathlib.Path(get_current_path() + '/' + 'checkpoints_double_4_to_4_utc_feature_pytree')
 

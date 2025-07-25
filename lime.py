@@ -111,7 +111,7 @@ class LIMEExplainer:
 
         for i in range(self.sample_size):
             # Generate a random number of indexes to perturb
-            num_indexes = random.randint(1, 5)
+            num_indexes = random.randint(1, 4)
             # Generate unique random indexes
             indexes = random.sample(range(len(self.timeseries)), num_indexes)
             # add if not already in the list

@@ -214,7 +214,7 @@ def preprocess_data(data: pd.DataFrame, target_column: str, feature_columns: lis
 #    data_temp = scale_data(data_temp, columns=feature_columns + [target_column] + [base_column] + [variance_column])
 
     data_temp = data_temp.dropna()
-    data_temp = data_temp.reset_index(drop=True)
+    #data_temp = data_temp.reset_index(drop=True)
     data_temp = data_temp[feature_columns + [target_column, base_column, 'Log_Returns', f'{base_column}_Variance', 'Close_Returns', f'Close_Returns_{window}_Volatility']]
     return data_temp
 

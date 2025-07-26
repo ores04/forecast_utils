@@ -242,7 +242,7 @@ class LSTM(nnx.Module):
 
         self.linear_layer1 = nnx.Linear(
             in_features=hidden_features[-1],
-            out_features=1,  # Output a single value for volatility prediction
+            out_features=2,  # Output a single value for volatility prediction
             use_bias=True,
             rngs=rngs
         )
@@ -262,7 +262,7 @@ class LSTM(nnx.Module):
         # now feed it to the linear layer
         x = x[:, -1, :]
         x = self.linear_layer1(x)
-        x = nnx.softplus(x) + 1e-6
+        x = nnx.softplus(x) + 1e-8
         return x  # Return the last output of the LSTM, which is the prediction for the last time step
 
     @staticmethod

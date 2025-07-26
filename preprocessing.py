@@ -278,7 +278,7 @@ def reduce_high_frequency_components(volatility_series) -> pd.DataFrame:
     """ This function will apply a wavelet transform to reduce high frequency components in the data."""
     wavelet = 'sym2'
     # The level of decomposition depends on the signal length and desired smoothing.
-    level = 3
+    level = 2
     coeffs = pywt.swt(volatility_series, wavelet, level=level)
 
     # 3. Threshold the detail coefficients to remove noise
@@ -313,4 +313,4 @@ if __name__ == "__main__":
     print(data_preprocessed['Standard_Realized_Volatility'].shape)
 
     visualisation.plot_timeseries(wavelet_transformed[-128:],
-                                  wavelet_transformed_shortened,)
+                                  standard_vola_copied[-128:].reset_index(drop=True),)
